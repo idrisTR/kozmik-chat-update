@@ -96,6 +96,12 @@ const roomHistory = {
     'Galaktik Konferans': []
 };
 const VOICE_ROOM = 'Galaktik Konferans';
+// Her gezegenin odaları. Kurucu dışındaki kullanıcılar SADECE kendi gezegenlerinin odalarına girebilir.
+const PLANET_ROOMS = {
+    neptune: ['Galle', 'Le Verrier', 'Lassell', 'Soğuk Dereceler', 'Galaktik Konferans'],
+    jupiter: ['Io', 'Europa', 'Ganymede', 'Büyük Kırmızı Leke', 'Galaktik Konferans']
+};
+const planetOf = (socket) => (socket.data.planet === 'jupiter' ? 'jupiter' : 'neptune');
 const MAX_HISTORY = 100;
 const MAX_MEDIA_PER_ROOM = 5; // RAM'i korumak için: eski medyalar silinir
 
@@ -236,12 +242,14 @@ function findUsername(lower) {
     return Object.keys(usersDb).find(n => n.toLowerCase() === String(lower).toLowerCase()) || null;
 }
 
-function canEnterRoom(user, roomName, username) {
+function canEnterRoom(user, roomName, username, planet) {
     if (isDmKey(roomName)) {
         const parts = roomName.slice(3).split('|');
         return parts.length === 2 && !!username && parts.includes(username.toLowerCase());
     }
     if (!has(roomHistory, roomName)) return false;
+    // 👑 Gezegenler arası geçiş sadece kurucuya özel
+    if (user && user.role !== 'owner' && !PLANET_ROOMS[planet === 'jupiter' ? 'jupiter' : 'neptune'].includes(roomName)) return false;
     if (RESTRICTED_ROOMS.includes(roomName)) return getRank(user) >= 1;
     return true;
 }
@@ -446,7 +454,7 @@ io.on('connection', (socket) => {
         if (!user || user.isBanned) return;
 
         const roomName = typeof data === 'object' && data ? data.room : data;
-        if (typeof roomName !== 'string' || isDmKey(roomName) || !canEnterRoom(user, roomName, socket.data.username)) return;
+        if (typeof roomName !== 'string' || isDmKey(roomName) || !canEnterRoom(user, roomName, socket.data.username, planetOf(socket))) return;
 
         leaveCurrentRoom(socket); // istemciye güvenme, sunucudaki kaydı kullan
 
@@ -465,7 +473,7 @@ io.on('connection', (socket) => {
             return;
         }
         const room = socket.data.room;
-        if (!room || data.room !== room || !canEnterRoom(user, room, socket.data.username)) return;
+        if (!room || data.room !== room || !canEnterRoom(user, room, socket.data.username, planetOf(socket))) return;
         if (user.mutedUntil && user.mutedUntil > Date.now()) {
             const left = Math.ceil((user.mutedUntil - Date.now()) / 60000);
             socket.emit('system-notice', { message: '🔇 Susturuldun. Kalan süre: ' + left + ' dk.' });
@@ -604,6 +612,32 @@ io.on('connection', (socket) => {
             console.error('Hesap silme hatası:', err);
             callback({ success: false, message: 'Sunucu hatası.' });
         }
+    });
+
+    /* ---------------- 👑 KURUCU PANELİ: gezegenler arası geçiş ---------------- */
+    socket.on('owner-switch-planet', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        const user = getUser(socket);
+        if (!user || user.role !== 'owner' || !isOwnerName(socket.data.username)) {
+            return callback({ success: false, message: 'Bu panel sadece kurucuya özel.' });
+        }
+        const planet = data && data.planet;
+        if (planet !== 'neptune' && planet !== 'jupiter') {
+            return callback({ success: false, message: 'Geçersiz gezegen.' });
+        }
+        leaveCurrentRoom(socket);
+        socket.data.room = null;
+        socket.data.planet = planet;
+        // Oturumu da güncelle: sayfa yenilenince aynı gezegende açılsın
+        const token = data && typeof data.token === 'string' ? data.token : '';
+        const sess = token ? sessions[sha(token)] : null;
+        if (sess && sess.username === socket.data.username) {
+            sess.planet = planet;
+            atomicWrite(SESSIONS_FILE, sessions);
+        }
+        addLog('planet', socket.data.username, '', planet);
+        broadcastUserCounts();
+        callback({ success: true, planet });
     });
 
     /* ---------------- WEBRTC (sadece Galaktik Konferans) ---------------- */
