@@ -21,9 +21,10 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 /* ------------------------------------------------------------------ */
 const USERS_FILE = path.join(__dirname, 'users.json');
 const ROLE_RANK = { standard: 0, vip: 1, dev: 2, owner: 3 };
+const DEFAULT_OWNER_USERNAME = 'idrisSX';
 // 👑 KURUCU: en yüksek rütbe. Ban / susturma / rol değiştirme / silme işlemlerine tamamen kapalıdır.
 // Birden fazla kurucu için: OWNER_USERS="idrisSX,baskaKisi"
-const OWNER_USERS = (process.env.OWNER_USERS || 'idrisSX').split(',').map(s => s.trim()).filter(Boolean);
+const OWNER_USERS = (process.env.OWNER_USERS || DEFAULT_OWNER_USERNAME).split(',').map(s => s.trim()).filter(Boolean);
 const isOwnerName = (name) => typeof name === 'string' && OWNER_USERS.some(o => o.toLowerCase() === name.toLowerCase());
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 

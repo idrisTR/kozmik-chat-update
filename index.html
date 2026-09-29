@@ -1356,7 +1356,9 @@
                 if (res.success) {
                     currentUser = res.user;
                     saveSession(res.token);
-                    // Rol her zaman sunucudan gelir (kurucu rolü ezilmesin)
+                    if (validatedPasscodeRole === 'dev' || validatedPasscodeRole === 'vip') {
+                        currentUser.role = validatedPasscodeRole;
+                    }
                     unlockPlatform();
                 } else if (res.isBanned) {
                     playSoundFx(140, 'sawtooth', 0.4);
