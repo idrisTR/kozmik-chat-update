@@ -745,6 +745,10 @@
                 👥 Çevrimiçi <span id="online-count-badge" class="room-count-badge">0</span><span id="dm-unread-badge" class="unread-pill" style="display:none;">0</span>
             </button>
 
+            <button id="owner-panel-btn" class="btn-admin-panel-trigger" style="display:none; border-color:#ffd700; color:#ffd700; background:rgba(255,215,0,0.08);" onclick="openOwnerModal()">
+                🪐 Kurucu Paneli
+            </button>
+
             <button id="admin-panel-btn" class="btn-admin-panel-trigger" style="display:none;" onclick="openAdminModal()">
                 👑 Admin Paneli
             </button>
@@ -881,6 +885,28 @@
                 <button class="btn-ban-toggle unban" onclick="showAdminLogs()">📜 Loglar</button>
             </div>
             <div class="admin-modal-body" id="admin-users-list"></div>
+        </div>
+    </div>
+
+    <!-- 👑 KURUCU PANELİ (sadece owner) -->
+    <div id="owner-modal-overlay" class="modal-overlay" onclick="if(event.target===this) closeOwnerModal()">
+        <div class="admin-modal-card">
+            <div class="admin-modal-header">
+                <h3>👑 Kurucu Paneli</h3>
+                <button class="btn-close-modal" onclick="closeOwnerModal()">✕</button>
+            </div>
+            <div class="admin-modal-body">
+                <div style="font-size:11px; font-family:'Fira Code',monospace; opacity:.75; margin-bottom:10px;">
+                    Gezegenler arası geçiş sadece sana özel. Diğer kullanıcılar sadece kendi gezegenlerinde kalır.
+                </div>
+                <div class="admin-user-row" style="cursor:pointer;" id="owner-go-neptune" onclick="ownerSwitchPlanet('neptune')">
+                    <div class="admin-user-info"><span>🔵 Neptün Ağı</span><span class="admin-user-role-badge" id="owner-tag-neptune"></span></div>
+                </div>
+                <div class="admin-user-row" style="cursor:pointer;" id="owner-go-jupiter" onclick="ownerSwitchPlanet('jupiter')">
+                    <div class="admin-user-info"><span>🟠 Jüpiter Ağı</span><span class="admin-user-role-badge" id="owner-tag-jupiter"></span></div>
+                </div>
+                <div id="owner-msg" style="font-size:11px; font-family:'Fira Code',monospace; min-height:16px; color:#ff4b4b; margin-top:8px;"></div>
+            </div>
         </div>
     </div>
 
@@ -1371,6 +1397,18 @@
             errEl.style.display = 'block';
         }
 
+        function applyPlanetTheme(planet) {
+            const jup = planet === 'jupiter';
+            document.body.classList.toggle('theme-jupiter', jup);
+            document.getElementById('app-brand-name').textContent = jup ? "JÜPİTER AĞI" : "NEPTÜN AĞI";
+            document.getElementById('neptune-brand-svg').style.display = jup ? 'none' : 'block';
+            document.getElementById('jupiter-brand-svg').style.display = jup ? 'block' : 'none';
+            document.getElementById('neptune-room-list').style.display = jup ? 'none' : 'flex';
+            document.getElementById('jupiter-room-list').style.display = jup ? 'flex' : 'none';
+            currentRoom = jup ? "Io" : "Galle";
+            document.getElementById('current-room-title').innerHTML = jup ? "🔴 Io Odası" : "🌐 Galle Odası";
+        }
+
         function unlockPlatform() {
             playSoundFx(850, 'sine', 0.4);
             document.getElementById('gateway-screen').classList.add('hidden');
@@ -1384,25 +1422,7 @@
             document.getElementById('user-display-name').textContent = currentUser.username;
             document.getElementById('user-avatar-text').textContent = currentUser.username.charAt(0).toUpperCase();
 
-            if (currentPlanetMode === 'jupiter') {
-                document.body.classList.add('theme-jupiter');
-                document.getElementById('app-brand-name').textContent = "JÜPİTER AĞI";
-                document.getElementById('neptune-brand-svg').style.display = 'none';
-                document.getElementById('jupiter-brand-svg').style.display = 'block';
-                document.getElementById('neptune-room-list').style.display = 'none';
-                document.getElementById('jupiter-room-list').style.display = 'flex';
-                currentRoom = "Io";
-                document.getElementById('current-room-title').innerHTML = "🔴 Io Odası";
-            } else {
-                document.body.classList.remove('theme-jupiter');
-                document.getElementById('app-brand-name').textContent = "NEPTÜN AĞI";
-                document.getElementById('neptune-brand-svg').style.display = 'block';
-                document.getElementById('jupiter-brand-svg').style.display = 'none';
-                document.getElementById('neptune-room-list').style.display = 'flex';
-                document.getElementById('jupiter-room-list').style.display = 'none';
-                currentRoom = "Galle";
-                document.getElementById('current-room-title').innerHTML = "🌐 Galle Odası";
-            }
+            applyPlanetTheme(currentPlanetMode);
 
             const roleBadge = document.getElementById('user-role-badge');
             const adminBtn = document.getElementById('admin-panel-btn');
@@ -1411,6 +1431,7 @@
                 roleBadge.textContent = "👑 KURUCU";
                 roleBadge.style.color = "#ffd700";
                 adminBtn.style.display = 'flex';
+                document.getElementById('owner-panel-btn').style.display = 'flex';
             } else if (currentUser.role === 'dev') {
                 roleBadge.textContent = "JÜPİTER GELİŞTİRİCİSİ";
                 roleBadge.style.color = "#ff8c3b";
@@ -1827,6 +1848,42 @@
         const b = document.getElementById('dm-unread-badge');
         b.textContent = total;
         b.style.display = total ? 'inline-block' : 'none';
+    }
+
+    /* 👑 KURUCU PANELİ */
+    function openOwnerModal() {
+        if (currentUser.role !== 'owner') return;
+        ['neptune', 'jupiter'].forEach(p => {
+            document.getElementById('owner-tag-' + p).textContent = currentPlanetMode === p ? '[BURADASIN]' : '';
+        });
+        document.getElementById('owner-msg').textContent = '';
+        document.getElementById('owner-modal-overlay').style.display = 'flex';
+    }
+    function closeOwnerModal() { document.getElementById('owner-modal-overlay').style.display = 'none'; }
+
+    function ownerSwitchPlanet(planet) {
+        if (currentUser.role !== 'owner') return;
+        if (planet === currentPlanetMode) { closeOwnerModal(); return; }
+        socket.emit('owner-switch-planet', { planet, token: getToken() }, (res) => {
+            if (!res || !res.success) {
+                document.getElementById('owner-msg').textContent = (res && res.message) || 'Geçiş başarısız.';
+                return;
+            }
+            if (isInVoice) leaveVoiceChannel();
+            currentPlanetMode = planet;
+            currentDmPartner = null;
+            applyPlanetTheme(planet);
+            cancelReply();
+            document.getElementById('voice-bar').style.display = 'none';
+            document.getElementById('messages-container').innerHTML = '';
+            const list = document.querySelectorAll('#' + planet + '-room-list .room-item');
+            list.forEach((el, i) => el.classList.toggle('active', i === 0));
+            document.getElementById('user-role-badge').style.color = '#ffd700';
+            socket.emit('join-room', { room: currentRoom, oldRoom: null, userName: currentUser.username });
+            playSoundFx(850, 'sine', 0.3);
+            closeOwnerModal();
+            toggleMobileSidebar(false);
+        });
     }
 
     function openOnlineModal() {
