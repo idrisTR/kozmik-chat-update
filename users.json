@@ -1,0 +1,12 @@
+{
+  "DJReaper": {
+    "role": "dev",
+    "isBanned": false,
+    "passwordHash": "$2a$10$kESh2hfiwFd4gN2nJfx.8OueH33RZ8Dd1etLU2z0ZhtcEB9MVMjYi"
+  },
+  "idrisSX": {
+    "role": "vip",
+    "isBanned": false,
+    "passwordHash": "$2a$10$x97BN/KLm9Q3ZcD7u8WWUuKuXC0tXjo4RaDKshErodD2M.NfKIZIq"
+  }
+}
