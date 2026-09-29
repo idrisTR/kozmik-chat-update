@@ -514,7 +514,7 @@
         </div>
 
         <div class="planet-selector-wrapper">
-            <button class="planet-nav-btn" id="btn-prev-planet" onclick="togglePlanetMode()" title="Gezegen Değiştir">‹</button>
+            <button class="planet-nav-btn" id="btn-prev-planet" style="display:none;" onclick="togglePlanetMode()" title="Gezegen Değiştir">‹</button>
             
             <div class="planet-box">
                 <!-- NEPTÜN SVG -->
@@ -610,7 +610,7 @@
                 </svg>
             </div>
 
-            <button class="planet-nav-btn" id="btn-next-planet" onclick="togglePlanetMode()" title="Gezegen Değiştir">›</button>
+            <button class="planet-nav-btn" id="btn-next-planet" style="display:none;" onclick="togglePlanetMode()" title="Gezegen Değiştir">›</button>
         </div>
 
         <div class="gateway-card" id="gateway-card-box">
@@ -1356,9 +1356,7 @@
                 if (res.success) {
                     currentUser = res.user;
                     saveSession(res.token);
-                    if (validatedPasscodeRole === 'dev' || validatedPasscodeRole === 'vip') {
-                        currentUser.role = validatedPasscodeRole;
-                    }
+                    // Rol her zaman sunucudan gelir (kurucu rolü ezilmesin)
                     unlockPlatform();
                 } else if (res.isBanned) {
                     playSoundFx(140, 'sawtooth', 0.4);
