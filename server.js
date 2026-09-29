@@ -6,6 +6,28 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+function loadDotEnv() {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return;
+    try {
+        for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const i = trimmed.indexOf('=');
+            if (i < 1) continue;
+            const key = trimmed.slice(0, i).trim();
+            let val = trimmed.slice(i + 1).trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                val = val.slice(1, -1);
+            }
+            if (key && process.env[key] === undefined) process.env[key] = val;
+        }
+    } catch (err) {
+        console.error('.env okunamadı:', err);
+    }
+}
+loadDotEnv();
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -83,12 +105,126 @@ if (migrated > 0) {
 /* ------------------------------------------------------------------ */
 /*  AYARLAR                                                            */
 /* ------------------------------------------------------------------ */
-// Kodları istersen ortam değişkeninden ver: NEPTUNE_CODES="a,b,c"
-const VALID_NEPTUNE_CODES = (process.env.NEPTUNE_CODES || 'NEPTUN2026,7777,ADAMS9999,0000').split(',');
-const VALID_JUPITER_CODES = (process.env.JUPITER_CODES || 'JUPITER999,DEV2026,IDRISDEV').split(',');
-const VIP_NEPTUNE_CODES = ['ADAMS9999', '0000'];
-
 const BAN_MESSAGE = '⛔ KOZMİK SINIR DIŞI EDİLDİNİZ! İtirazınız varsa: idrisefesakin992@gmail.com';
+const CODES_FILE = path.join(__dirname, 'codes.json');
+const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+const BACKUP_DIR = path.join(__dirname, 'backups');
+const ALLOWED_CODE_ROLES = { standard: true, vip: true, dev: true };
+
+function atomicWriteEarly(file, data) {
+    try {
+        const tmp = file + '.tmp';
+        fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tmp, file);
+    } catch (err) {
+        console.error('Yazma hatası (' + path.basename(file) + '):', err);
+    }
+}
+
+function emptyCodes() { return { neptune: [], jupiter: [] }; }
+function normalizeCodes(raw) {
+    const out = emptyCodes();
+    for (const planet of ['neptune', 'jupiter']) {
+        const arr = Array.isArray(raw && raw[planet]) ? raw[planet] : [];
+        for (const item of arr) {
+            const code = String(item && item.code != null ? item.code : item).trim();
+            if (!code || code.length > 40) continue;
+            let role = item && typeof item.role === 'string' ? item.role : (planet === 'jupiter' ? 'dev' : 'standard');
+            if (!ALLOWED_CODE_ROLES[role]) role = planet === 'jupiter' ? 'dev' : 'standard';
+            out[planet].push({ code, role });
+        }
+    }
+    return out;
+}
+function codesFromEnv() {
+    const n = (process.env.NEPTUNE_CODES || '').split(',').map(s => s.trim()).filter(Boolean);
+    const v = (process.env.NEPTUNE_VIP_CODES || '').split(',').map(s => s.trim()).filter(Boolean);
+    const j = (process.env.JUPITER_CODES || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!n.length && !j.length) return null;
+    return {
+        neptune: n.map(code => ({ code, role: v.includes(code) ? 'vip' : 'standard' })),
+        jupiter: j.map(code => ({ code, role: 'dev' }))
+    };
+}
+function loadCodes() {
+    try {
+        if (fs.existsSync(CODES_FILE)) {
+            return normalizeCodes(JSON.parse(fs.readFileSync(CODES_FILE, 'utf8')));
+        }
+    } catch (err) {
+        console.error('codes.json okunamadı:', err);
+    }
+    const fromEnv = codesFromEnv();
+    if (fromEnv) {
+        const normalized = normalizeCodes(fromEnv);
+        atomicWriteEarly(CODES_FILE, normalized);
+        console.log('🔐 Frekans kodları .env üzerinden codes.json dosyasına alındı.');
+        return normalized;
+    }
+    const empty = emptyCodes();
+    atomicWriteEarly(CODES_FILE, empty);
+    console.warn('⚠️ codes.json boş. Kurucu panelinden frekans kodu ekle.');
+    return empty;
+}
+function saveCodes() { atomicWriteEarly(CODES_FILE, freqCodes); }
+function findFreqCode(planet, code) {
+    const list = freqCodes[planet === 'jupiter' ? 'jupiter' : 'neptune'] || [];
+    return list.find(c => c.code === code) || null;
+}
+
+const defaultSettings = () => ({
+    lockedRooms: [],
+    maintenance: { neptune: false, jupiter: false },
+    messagesToday: 0,
+    messagesDay: new Date().toISOString().slice(0, 10)
+});
+function loadSettings() {
+    try {
+        if (fs.existsSync(SETTINGS_FILE)) {
+            return { ...defaultSettings(), ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+        }
+    } catch (err) {
+        console.error('settings.json okunamadı:', err);
+    }
+    return defaultSettings();
+}
+function saveSettings() { atomicWriteEarly(SETTINGS_FILE, settings); }
+function todayStamp() { return new Date().toISOString().slice(0, 10); }
+function rollMessageDay() {
+    const day = todayStamp();
+    if (settings.messagesDay !== day) {
+        settings.messagesDay = day;
+        settings.messagesToday = 0;
+        saveSettings();
+    }
+}
+function bumpMessageCount() {
+    rollMessageDay();
+    settings.messagesToday++;
+    saveSettings();
+}
+
+let freqCodes = loadCodes();
+let settings = loadSettings();
+rollMessageDay();
+
+function dailyBackup() {
+    try {
+        const day = todayStamp();
+        const dir = path.join(BACKUP_DIR, day);
+        if (fs.existsSync(dir)) return;
+        fs.mkdirSync(dir, { recursive: true });
+        for (const name of ['users.json', 'rooms.json', 'sessions.json', 'logs.json', 'dms.json', 'codes.json', 'settings.json']) {
+            const src = path.join(__dirname, name);
+            if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, name));
+        }
+        console.log('💾 Günlük yedek alındı: backups/' + day);
+    } catch (err) {
+        console.error('Yedek hatası:', err);
+    }
+}
+dailyBackup();
+setInterval(dailyBackup, 60 * 60 * 1000);
 
 const RESTRICTED_ROOMS = ['Soğuk Dereceler', 'Büyük Kırmızı Leke']; // vip/dev gerekir
 const roomHistory = {
@@ -243,16 +379,32 @@ function findUsername(lower) {
     return Object.keys(usersDb).find(n => n.toLowerCase() === String(lower).toLowerCase()) || null;
 }
 
-function canEnterRoom(user, roomName, username, planet) {
+function isRoomLocked(roomName) {
+    return Array.isArray(settings.lockedRooms) && settings.lockedRooms.includes(roomName);
+}
+function isPlanetDown(planet) {
+    const p = planet === 'jupiter' ? 'jupiter' : 'neptune';
+    return !!(settings.maintenance && settings.maintenance[p]);
+}
+function denyReason(user, roomName, username, planet) {
     if (isDmKey(roomName)) {
         const parts = roomName.slice(3).split('|');
-        return parts.length === 2 && !!username && parts.includes(username.toLowerCase());
+        if (parts.length === 2 && username && parts.includes(username.toLowerCase())) return null;
+        return 'Özel sohbet açılamadı.';
     }
-    if (!has(roomHistory, roomName)) return false;
-    // 👑 Gezegenler arası geçiş sadece kurucuya özel
-    if (user && user.role !== 'owner' && !PLANET_ROOMS[planet === 'jupiter' ? 'jupiter' : 'neptune'].includes(roomName)) return false;
-    if (RESTRICTED_ROOMS.includes(roomName)) return getRank(user) >= 1;
-    return true;
+    if (!has(roomHistory, roomName)) return 'Oda bulunamadı.';
+    if (user && user.role !== 'owner' && isPlanetDown(planet)) return 'Bu gezegen bakımda.';
+    if (user && user.role !== 'owner' && !PLANET_ROOMS[planet === 'jupiter' ? 'jupiter' : 'neptune'].includes(roomName)) {
+        return 'Bu oda senin gezegenine kapalı.';
+    }
+    if (RESTRICTED_ROOMS.includes(roomName) && getRank(user) < 1) return 'Bu oda VIP ve üstüne özel.';
+    if (isRoomLocked(roomName) && getRank(user) < 1 && !(user && user.role === 'owner')) {
+        return 'Bu oda geçici olarak kilitli (VIP ve üstü).';
+    }
+    return null;
+}
+function canEnterRoom(user, roomName, username, planet) {
+    return !denyReason(user, roomName, username, planet);
 }
 
 function trimMedia(room) {
@@ -333,6 +485,87 @@ function kickBanned(username) {
     broadcastOnline();
 }
 
+function forceKick(username, message) {
+    if (isOwnerName(username)) return false;
+    dropSessions(username);
+    for (const [, s] of io.sockets.sockets) {
+        if (s.data.username === username) {
+            s.emit('kicked-out', { message: message || 'Kurucu tarafından odadan çıkarıldın.' });
+            s.data.username = null;
+            s.data.room = null;
+        }
+    }
+    broadcastOnline();
+    broadcastUserCounts();
+    return true;
+}
+
+function collectOwnerStats() {
+    rollMessageDay();
+    const planetCounts = { neptune: 0, jupiter: 0 };
+    const roomCounts = {};
+    Object.keys(roomHistory).forEach(r => { roomCounts[r] = 0; });
+    let online = 0;
+    for (const [, s] of io.sockets.sockets) {
+        if (!s.data.username) continue;
+        online++;
+        planetCounts[planetOf(s)]++;
+        const r = s.data.room;
+        if (r && has(roomCounts, r)) roomCounts[r]++;
+    }
+    return {
+        online,
+        totalUsers: Object.keys(usersDb).length,
+        messagesToday: settings.messagesToday || 0,
+        planetCounts,
+        roomCounts,
+        lockedRooms: settings.lockedRooms || [],
+        maintenance: settings.maintenance || { neptune: false, jupiter: false },
+        rooms: Object.keys(roomHistory)
+    };
+}
+
+function defaultRoomFor(planet) {
+    return planet === 'jupiter' ? 'Io' : 'Galle';
+}
+
+function evictUnlocked(roomName) {
+    const stay = (user) => user && (user.role === 'owner' || getRank(user) >= 1);
+    for (const [, s] of io.sockets.sockets) {
+        if (s.data.room !== roomName) continue;
+        const user = getUser(s);
+        if (stay(user)) continue;
+        leaveCurrentRoom(s);
+        s.data.room = null;
+        s.emit('join-denied', { message: 'Bu oda kilitlendi (VIP ve üstü).', room: roomName });
+        const fallback = defaultRoomFor(planetOf(s));
+        if (canEnterRoom(user, fallback, s.data.username, planetOf(s))) {
+            s.join(fallback);
+            s.data.room = fallback;
+            s.emit('forced-room', { room: fallback, history: roomHistory[fallback] });
+        }
+    }
+    broadcastUserCounts();
+}
+
+function notifyPlanetMaintenance(planet, on) {
+    for (const [, s] of io.sockets.sockets) {
+        if (!s.data.username) continue;
+        if (planetOf(s) !== planet) continue;
+        const user = getUser(s);
+        if (user && user.role === 'owner') {
+            s.emit('planet-maintenance', { planet, on, ownerBypass: true });
+            continue;
+        }
+        s.emit('planet-maintenance', { planet, on, ownerBypass: false });
+        if (on && s.data.room) {
+            leaveCurrentRoom(s);
+            s.data.room = null;
+        }
+    }
+    broadcastUserCounts();
+}
+
 /* ------------------------------------------------------------------ */
 /*  SOCKET                                                             */
 /* ------------------------------------------------------------------ */
@@ -345,13 +578,8 @@ io.on('connection', (socket) => {
         if (typeof callback !== 'function') return;
         const planet = data && data.planet;
         const code = data && String(data.code);
-        let role = null;
-
-        if (planet === 'neptune' && VALID_NEPTUNE_CODES.includes(code)) {
-            role = VIP_NEPTUNE_CODES.includes(code) ? 'vip' : 'standard';
-        } else if (planet === 'jupiter' && VALID_JUPITER_CODES.includes(code)) {
-            role = 'dev';
-        }
+        const hit = (planet === 'neptune' || planet === 'jupiter') ? findFreqCode(planet, code) : null;
+        const role = hit ? hit.role : null;
 
         if (!role) {
             return callback({ success: false, message: '⚠️ HATALI FREKANS KODU! ERİŞİM REDDEDİLDİ.' });
@@ -402,7 +630,12 @@ io.on('connection', (socket) => {
             socket.data.pendingRole = null;
             addLog('register', username, '', role);
             broadcastOnline();
-            callback({ success: true, token: issueSession(username, socket.data.planet), user: { username, role, isBanned: false } });
+            callback({
+                success: true,
+                token: issueSession(username, socket.data.planet),
+                user: { username, role, isBanned: false },
+                maintenance: isPlanetDown(socket.data.planet) && role !== 'owner'
+            });
         } catch (err) {
             console.error('Kayıt hatası:', err);
             callback({ success: false, message: 'Sunucu hatası.' });
@@ -442,7 +675,12 @@ io.on('connection', (socket) => {
             socket.data.username = username;
             addLog('login', username);
             broadcastOnline();
-            callback({ success: true, token: issueSession(username, socket.data.planet), user: { username, role: user.role, isBanned: false } });
+            callback({
+                success: true,
+                token: issueSession(username, socket.data.planet),
+                user: { username, role: user.role, isBanned: false },
+                maintenance: isPlanetDown(socket.data.planet) && user.role !== 'owner'
+            });
         } catch (err) {
             console.error('Giriş hatası:', err);
             callback({ success: false, message: 'Sunucu hatası.' });
@@ -455,7 +693,12 @@ io.on('connection', (socket) => {
         if (!user || user.isBanned) return;
 
         const roomName = typeof data === 'object' && data ? data.room : data;
-        if (typeof roomName !== 'string' || isDmKey(roomName) || !canEnterRoom(user, roomName, socket.data.username, planetOf(socket))) return;
+        if (typeof roomName !== 'string' || isDmKey(roomName)) return;
+        const why = denyReason(user, roomName, socket.data.username, planetOf(socket));
+        if (why) {
+            socket.emit('join-denied', { message: why, room: roomName });
+            return;
+        }
 
         leaveCurrentRoom(socket); // istemciye güvenme, sunucudaki kaydı kullan
 
@@ -516,6 +759,7 @@ io.on('connection', (socket) => {
         if (msg.mediaUrl) trimMedia(room);
         markRoomsDirty();
 
+        if (!isDmKey(room)) bumpMessageCount();
         io.to(room).emit('receive-message', msg);
         if (isDmKey(room)) notifyDm(room, socket.data.username, msg);
         socket.to(room).emit('user-stop-typing', { socketId: socket.id });
@@ -544,7 +788,12 @@ io.on('connection', (socket) => {
         socket.data.username = sess.username;
         socket.data.planet = sess.planet;
         broadcastOnline();
-        callback({ success: true, planet: sess.planet, user: { username: sess.username, role: user.role, isBanned: false } });
+        callback({
+            success: true,
+            planet: sess.planet,
+            user: { username: sess.username, role: user.role, isBanned: false },
+            maintenance: isPlanetDown(sess.planet) && user.role !== 'owner'
+        });
     });
 
     socket.on('auth-logout', (data) => {
@@ -638,7 +887,161 @@ io.on('connection', (socket) => {
         }
         addLog('planet', socket.data.username, '', planet);
         broadcastUserCounts();
-        callback({ success: true, planet });
+        callback({ success: true, planet, maintenance: isPlanetDown(planet) });
+    });
+
+    function ownerActor(callback) {
+        const actor = getUser(socket);
+        if (!actor || actor.role !== 'owner' || !isOwnerName(socket.data.username)) {
+            callback({ success: false, message: 'Bu panel sadece kurucuya özel.' });
+            return null;
+        }
+        return actor;
+    }
+
+    socket.on('owner-stats', (callback) => {
+        if (typeof callback !== 'function' || !ownerActor(callback)) return;
+        callback({ success: true, stats: collectOwnerStats() });
+    });
+
+    socket.on('owner-announce', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const text = String((data && data.text) || '').trim().slice(0, 300);
+        if (!text) return callback({ success: false, message: 'Duyuru metni boş.' });
+        const target = data && data.target;
+        const payload = { text, from: socket.data.username, ts: Date.now() };
+        if (target === 'all') {
+            io.emit('owner-announce', payload);
+        } else if (target === 'neptune' || target === 'jupiter') {
+            for (const [, s] of io.sockets.sockets) {
+                if (s.data.username && planetOf(s) === target) s.emit('owner-announce', payload);
+            }
+        } else if (typeof target === 'string' && has(roomHistory, target)) {
+            io.to(target).emit('owner-announce', payload);
+        } else {
+            return callback({ success: false, message: 'Hedef geçersiz.' });
+        }
+        addLog('announce', socket.data.username, '', String(target));
+        callback({ success: true });
+    });
+
+    socket.on('owner-clear-room', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const room = data && data.room;
+        if (typeof room !== 'string' || !has(roomHistory, room)) {
+            return callback({ success: false, message: 'Oda bulunamadı.' });
+        }
+        roomHistory[room] = [];
+        markRoomsDirty();
+        io.to(room).emit('room-cleared', { room });
+        addLog('clear', socket.data.username, '', room);
+        callback({ success: true });
+    });
+
+    socket.on('owner-lock-room', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const room = data && data.room;
+        if (typeof room !== 'string' || !has(roomHistory, room)) {
+            return callback({ success: false, message: 'Oda bulunamadı.' });
+        }
+        const lock = !!(data && data.locked);
+        const set = new Set(settings.lockedRooms || []);
+        if (lock) set.add(room); else set.delete(room);
+        settings.lockedRooms = [...set];
+        saveSettings();
+        if (lock) evictUnlocked(room);
+        io.emit('rooms-lock-sync', { lockedRooms: settings.lockedRooms });
+        addLog(lock ? 'lock' : 'unlock', socket.data.username, '', room);
+        callback({ success: true, lockedRooms: settings.lockedRooms });
+    });
+
+    socket.on('owner-maintenance', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const planet = data && data.planet;
+        if (planet !== 'neptune' && planet !== 'jupiter') {
+            return callback({ success: false, message: 'Geçersiz gezegen.' });
+        }
+        const on = !!(data && data.on);
+        if (!settings.maintenance) settings.maintenance = { neptune: false, jupiter: false };
+        settings.maintenance[planet] = on;
+        saveSettings();
+        notifyPlanetMaintenance(planet, on);
+        addLog('maintenance', socket.data.username, '', planet + ':' + (on ? 'on' : 'off'));
+        callback({ success: true, maintenance: settings.maintenance });
+    });
+
+    socket.on('owner-kick', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const target = data && typeof data.target === 'string' ? findUsername(data.target) : null;
+        if (!target) return callback({ success: false, message: 'Kullanıcı bulunamadı.' });
+        if (protectOwner(target, callback)) return;
+        const msg = String((data && data.message) || 'Kurucu tarafından çıkarıldın. Ban yok; tekrar giriş yapabilirsin.').slice(0, 200);
+        forceKick(target, msg);
+        addLog('kick', socket.data.username, target);
+        callback({ success: true });
+    });
+
+    socket.on('owner-get-codes', (callback) => {
+        if (typeof callback !== 'function' || !ownerActor(callback)) return;
+        callback({ success: true, codes: freqCodes });
+    });
+
+    socket.on('owner-add-code', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const planet = data && data.planet;
+        const code = String((data && data.code) || '').trim();
+        let role = data && data.role;
+        if (planet !== 'neptune' && planet !== 'jupiter') return callback({ success: false, message: 'Geçersiz gezegen.' });
+        if (!code || code.length > 40) return callback({ success: false, message: 'Kod 1-40 karakter olmalı.' });
+        if (!ALLOWED_CODE_ROLES[role]) role = planet === 'jupiter' ? 'dev' : 'standard';
+        if ([...freqCodes.neptune, ...freqCodes.jupiter].some(c => c.code === code)) {
+            return callback({ success: false, message: 'Bu kod zaten var.' });
+        }
+        freqCodes[planet].push({ code, role });
+        saveCodes();
+        addLog('code-add', socket.data.username, '', planet);
+        callback({ success: true, codes: freqCodes });
+    });
+
+    socket.on('owner-delete-code', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const planet = data && data.planet;
+        const code = String((data && data.code) || '');
+        if (planet !== 'neptune' && planet !== 'jupiter') return callback({ success: false, message: 'Geçersiz gezegen.' });
+        const before = freqCodes[planet].length;
+        freqCodes[planet] = freqCodes[planet].filter(c => c.code !== code);
+        if (freqCodes[planet].length === before) return callback({ success: false, message: 'Kod bulunamadı.' });
+        saveCodes();
+        addLog('code-del', socket.data.username, '', planet);
+        callback({ success: true, codes: freqCodes });
+    });
+
+    socket.on('owner-update-code', (data, callback) => {
+        if (typeof callback !== 'function') return;
+        if (!ownerActor(callback)) return;
+        const planet = data && data.planet;
+        const oldCode = String((data && data.oldCode) || '');
+        const newCode = String((data && data.newCode) || oldCode).trim();
+        let role = data && data.role;
+        if (planet !== 'neptune' && planet !== 'jupiter') return callback({ success: false, message: 'Geçersiz gezegen.' });
+        const item = freqCodes[planet].find(c => c.code === oldCode);
+        if (!item) return callback({ success: false, message: 'Kod bulunamadı.' });
+        if (!newCode || newCode.length > 40) return callback({ success: false, message: 'Kod 1-40 karakter olmalı.' });
+        if (newCode !== oldCode && [...freqCodes.neptune, ...freqCodes.jupiter].some(c => c.code === newCode)) {
+            return callback({ success: false, message: 'Yeni kod zaten var.' });
+        }
+        if (ALLOWED_CODE_ROLES[role]) item.role = role;
+        item.code = newCode;
+        saveCodes();
+        addLog('code-edit', socket.data.username, '', planet);
+        callback({ success: true, codes: freqCodes });
     });
 
     /* ---------------- WEBRTC (sadece Galaktik Konferans) ---------------- */

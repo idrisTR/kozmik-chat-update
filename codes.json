@@ -1,0 +1,13 @@
+{
+  "neptune": [
+    { "code": "NEPTUN2026", "role": "standard" },
+    { "code": "7777", "role": "standard" },
+    { "code": "ADAMS9999", "role": "vip" },
+    { "code": "0000", "role": "vip" }
+  ],
+  "jupiter": [
+    { "code": "JUPITER999", "role": "dev" },
+    { "code": "DEV2026", "role": "dev" },
+    { "code": "IDRISDEV", "role": "dev" }
+  ]
+}
