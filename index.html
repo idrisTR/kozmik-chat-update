@@ -1407,7 +1407,11 @@
             const roleBadge = document.getElementById('user-role-badge');
             const adminBtn = document.getElementById('admin-panel-btn');
 
-            if (currentUser.role === 'dev') {
+            if (currentUser.role === 'owner') {
+                roleBadge.textContent = "👑 KURUCU";
+                roleBadge.style.color = "#ffd700";
+                adminBtn.style.display = 'flex';
+            } else if (currentUser.role === 'dev') {
                 roleBadge.textContent = "JÜPİTER GELİŞTİRİCİSİ";
                 roleBadge.style.color = "#ff8c3b";
                 adminBtn.style.display = 'flex';
@@ -1457,6 +1461,7 @@
                             <option value="standard" ${u.role === 'standard' ? 'selected' : ''}>Standart</option>
                             <option value="vip" ${u.role === 'vip' ? 'selected' : ''}>VIP / Yetkili</option>
                             <option value="dev" ${u.role === 'dev' ? 'selected' : ''}>Geliştirici</option>
+                            ${u.role === 'owner' ? '<option value="owner" selected>👑 Kurucu</option>' : ''}
                         </select>
                         <button class="btn-ban-toggle ${u.isBanned ? 'unban' : 'ban'}">
                             ${u.isBanned ? 'BAN KALDIR' : 'BANLA'}
@@ -1464,6 +1469,9 @@
                         <button class="btn-ban-toggle unban btn-mute">${u.mutedUntil > Date.now() ? '🔊 AÇ' : '🔇 SUSTUR'}</button>
                     </div>
                 `;
+                if (u.role === 'owner') {
+                    row.querySelectorAll('select, button').forEach(el => { el.disabled = true; el.style.opacity = '0.4'; el.style.cursor = 'not-allowed'; });
+                }
                 row.querySelector('.select-role').addEventListener('change', (e) => changeUserRole(u.username, e.target.value));
                 row.querySelector('.btn-ban-toggle').addEventListener('click', () => toggleUserBan(u.username));
                 row.querySelector('.btn-mute').addEventListener('click', () => muteUser(u.username, u.mutedUntil > Date.now()));
@@ -1571,7 +1579,7 @@
         }
 
         function tryEnterRestrictedRoom(roomName, element) {
-            if (currentUser.role === 'vip' || currentUser.role === 'dev') {
+            if (['vip', 'dev', 'owner'].includes(currentUser.role)) {
                 switchRoom(roomName, true, element);
             } else {
                 playSoundFx(180, 'square', 0.2);
@@ -1612,10 +1620,11 @@
             const isSelf = data.sender === currentUser.username;
 
             const node = document.createElement('div');
-            node.className = `message-node ${isSelf ? 'self' : 'other'} ${data.isVip || data.isDev ? 'vip' : ''}`;
+            node.className = `message-node ${isSelf ? 'self' : 'other'} ${data.isVip || data.isDev || data.isOwner ? 'vip' : ''}`;
 
             let roleTag = '';
-            if (data.isDev) roleTag = '⚡ [GELİŞTİRİCİ]';
+            if (data.isOwner) roleTag = '👑 [KURUCU]';
+            else if (data.isDev) roleTag = '⚡ [GELİŞTİRİCİ]';
             else if (data.isVip) roleTag = '❄️ [YETKİLİ]';
 
             let replyQuoteHtml = '';
@@ -1639,7 +1648,7 @@
 
             node.dataset.id = data.id || '';
             const inDm = currentRoom.startsWith('dm:');
-            const canDel = isSelf || (!inDm && (currentUser.role === 'vip' || currentUser.role === 'dev'));
+            const canDel = isSelf || (!inDm && ['vip', 'dev', 'owner'].includes(currentUser.role));
             const delBtn = canDel && data.id ? '<button type="button" class="btn-reply-msg btn-del-msg">🗑 Sil</button>' : '';
 
             node.innerHTML = `
@@ -1851,7 +1860,7 @@
             const info = document.createElement('div');
             info.className = 'admin-user-info';
             if (online) { const dot = document.createElement('span'); dot.className = 'online-dot'; info.appendChild(dot); }
-            info.appendChild(document.createTextNode(name + (role === 'dev' ? ' ⚡' : role === 'vip' ? ' ❄️' : '')));
+            info.appendChild(document.createTextNode(name + (role === 'owner' ? ' 👑' : role === 'dev' ? ' ⚡' : role === 'vip' ? ' ❄️' : '')));
             if (dmUnread[name]) {
                 const pill = document.createElement('span');
                 pill.className = 'unread-pill';
