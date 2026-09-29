@@ -20,7 +20,11 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 /*  KULLANICI VERİTABANI                                               */
 /* ------------------------------------------------------------------ */
 const USERS_FILE = path.join(__dirname, 'users.json');
-const ROLE_RANK = { standard: 0, vip: 1, dev: 2 };
+const ROLE_RANK = { standard: 0, vip: 1, dev: 2, owner: 3 };
+// 👑 KURUCU: en yüksek rütbe. Ban / susturma / rol değiştirme / silme işlemlerine tamamen kapalıdır.
+// Birden fazla kurucu için: OWNER_USERS="idrisSX,baskaKisi"
+const OWNER_USERS = (process.env.OWNER_USERS || 'idrisSX').split(',').map(s => s.trim()).filter(Boolean);
+const isOwnerName = (name) => typeof name === 'string' && OWNER_USERS.some(o => o.toLowerCase() === name.toLowerCase());
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
 function loadUsers() {
@@ -60,6 +64,20 @@ if (migrated > 0) {
     saveUsers(usersDb);
     console.log(`🔐 ${migrated} kullanıcının şifresi hash'lendi.`);
 }
+
+// Kurucu hesaplar her açılışta owner yapılır, ban/susturma kaldırılır (users.json elle bozulsa bile)
+(function enforceOwners() {
+    let changed = false;
+    for (const name of Object.keys(usersDb)) {
+        if (!isOwnerName(name)) continue;
+        const u = usersDb[name];
+        if (u.role !== 'owner' || u.isBanned || u.mutedUntil) {
+            u.role = 'owner'; u.isBanned = false; delete u.mutedUntil;
+            changed = true;
+        }
+    }
+    if (changed) { saveUsers(usersDb); console.log('👑 Kurucu hesaplar güncellendi.'); }
+})();
 
 /* ------------------------------------------------------------------ */
 /*  AYARLAR                                                            */
@@ -296,6 +314,7 @@ function notifyDm(room, senderName, msg) {
 }
 
 function kickBanned(username) {
+    if (isOwnerName(username)) return;
     for (const [, s] of io.sockets.sockets) {
         if (s.data.username === username) {
             s.emit('kicked-banned', { message: BAN_MESSAGE });
@@ -353,6 +372,9 @@ io.on('connection', (socket) => {
             }
             if (password !== confirmPassword) {
                 return callback({ success: false, message: 'Şifreler birbiriyle eşleşmiyor!' });
+            }
+            if (isOwnerName(username)) {
+                return callback({ success: false, message: 'Bu kullanıcı adı ayrılmış!' });
             }
             const lower = username.toLowerCase();
             if (Object.keys(usersDb).some(n => n.toLowerCase() === lower)) {
@@ -461,6 +483,7 @@ io.on('connection', (socket) => {
             text,
             isVip: user.role === 'vip',
             isDev: user.role === 'dev',
+            isOwner: user.role === 'owner',
             time: typeof data.time === 'string' ? data.time.slice(0, 8) : '',
             replyTo: null
         };
@@ -557,6 +580,9 @@ io.on('connection', (socket) => {
             const user = getUser(socket);
             if (!user) return callback({ success: false, message: 'Giriş yapmalısın.' });
             const name = socket.data.username;
+            if (isOwnerName(name) || user.role === 'owner') {
+                return callback({ success: false, message: '👑 Kurucu hesap silinemez.' });
+            }
             const chk = await checkPassword(socket, name, data && data.password);
             if (chk === 'locked') return callback({ success: false, message: 'Çok fazla deneme! 1 dakika bekle.' });
             if (chk !== 'ok') return callback({ success: false, message: 'Şifre yanlış!' });
@@ -605,6 +631,13 @@ io.on('connection', (socket) => {
     /* ---------------- ADMİN PANEL (yetki kontrollü) ---------------- */
     // Kural: kendinden DÜŞÜK rütbeli kullanıcıları yönetebilirsin.
     // vip → standard'ları yönetir, dev → vip ve standard'ları yönetir.
+    function protectOwner(targetName, callback) {
+        if (isOwnerName(targetName) || (has(usersDb, targetName) && usersDb[targetName].role === 'owner')) {
+            callback({ success: false, message: '👑 Kurucuya dokunulamaz.' });
+            return true;
+        }
+        return false;
+    }
     function adminActor(callback) {
         const actor = getUser(socket);
         if (!actor || actor.isBanned || getRank(actor) < 1) {
@@ -632,9 +665,10 @@ io.on('connection', (socket) => {
         if (typeof targetUsername !== 'string' || !has(usersDb, targetUsername)) {
             return callback({ success: false, message: 'Kullanıcı bulunamadı.' });
         }
-        if (!has(ROLE_RANK, newRole)) {
+        if (!has(ROLE_RANK, newRole) || newRole === 'owner') {
             return callback({ success: false, message: 'Geçersiz rol.' });
         }
+        if (protectOwner(targetUsername, callback)) return;
         const target = usersDb[targetUsername];
         if (getRank(target) >= getRank(actor) || ROLE_RANK[newRole] > getRank(actor)) {
             return callback({ success: false, message: 'Bu işlem için yetkin yetmiyor.' });
@@ -656,6 +690,7 @@ io.on('connection', (socket) => {
         if (typeof targetUsername !== 'string' || !has(usersDb, targetUsername)) {
             return callback({ success: false, message: 'Kullanıcı bulunamadı.' });
         }
+        if (protectOwner(targetUsername, callback)) return;
         const target = usersDb[targetUsername];
         if (getRank(target) >= getRank(actor)) {
             return callback({ success: false, message: 'Bu işlem için yetkin yetmiyor.' });
@@ -676,6 +711,7 @@ io.on('connection', (socket) => {
         if (typeof targetUsername !== 'string' || !has(usersDb, targetUsername)) {
             return callback({ success: false, message: 'Kullanıcı bulunamadı.' });
         }
+        if (protectOwner(targetUsername, callback)) return;
         const target = usersDb[targetUsername];
         if (getRank(target) >= getRank(actor)) {
             return callback({ success: false, message: 'Bu işlem için yetkin yetmiyor.' });
