@@ -525,7 +525,7 @@
     <canvas id="stars-canvas"></canvas>
     <div id="gold-announce" class="gold-announce"></div>
     <div id="maintenance-overlay">
-        <h2>🛠️ Gezegen bakımda</h2>
+        <h2>🛠️️ Gezegen bakımda</h2>
         <p style="color:#94a3b8; max-width:420px; line-height:1.5;">Bu ağ geçici olarak kapalı. Kurucu bakım bitince buradan devam edeceksin.</p>
     </div>
 
@@ -1102,10 +1102,9 @@
             }
         });
 
-        /* --- AYARLAR MODAL LOHIĞI --- */
+        /* --- AYARLAR MODAL LOJİĞİ --- */
         function openSettingsModal(e) {
             if(e) e.stopPropagation();
-            // Hesap bölümü sadece giriş yapılmışsa görünür
             document.getElementById('account-settings-block').style.display = currentUser.username ? 'flex' : 'none';
             document.getElementById('settings-modal-overlay').style.display = 'flex';
         }
@@ -1375,6 +1374,7 @@
 
         /* --- GEZEGEN VE GELİŞTİRİCİ TEMA DEĞİŞİMİ --- */
         function togglePlanetMode() {
+            triggerWarpEffect();
             playSoundFx(600, 'sine', 0.12);
             const badge = document.getElementById('card-badge');
             const title = document.getElementById('card-title');
@@ -1403,7 +1403,7 @@
                 title.textContent = "JÜPİTER GELİŞTİRİCİ AĞI // FREKANS KİLİDİ";
                 desc.textContent = "Geliştirici moduna erişmek için özel Jüpiter frekans kodunuzu girin. Üst düzey sistem yetkisi gerektirir.";
                 passInput.placeholder = "GELİŞTİRİCİ FREKANS KODU";
-                submitBtn.textContent = "GELİŞTİRİCİ FREKANSINA BAĞLAN";
+                submitBtn.textContent = "GELİŞTİRİCİ FREKANSA BAĞLAN";
             } else {
                 currentPlanetMode = 'neptune';
                 document.body.classList.remove('theme-jupiter');
@@ -1789,7 +1789,11 @@
             }
 
             let mediaHtml = '';
-            const safeMedia = typeof data.mediaUrl === 'string' && /^data:(image|video)\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/.test(data.mediaUrl);
+            const safeMedia = typeof data.mediaUrl === 'string' && (
+                data.mediaUrl.startsWith('/uploads/') || 
+                /^data:(image|video)\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/.test(data.mediaUrl)
+            );
+
             if (!safeMedia) {
                 mediaHtml = '';
             } else if (data.mediaType === 'image') {
@@ -1853,10 +1857,26 @@
             setTimeout(() => location.reload(), 150);
         }
 
-        /* HD NETLİKTE CANLI DÖNEN VE PARLAYAN YILDIZLAR */
+        /* --- HİPER HIZ / WARP EFEKTİ VE CANLI YILDIZLAR --- */
         const canvas = document.getElementById('stars-canvas');
         const ctx = canvas.getContext('2d');
         let stars = [];
+        let warpIntensity = 0; // 0: Normal, 1: Tam Warp Hızı
+        let warpTimeout = null;
+
+        function triggerWarpEffect() {
+            warpIntensity = 1;
+            if (warpTimeout) clearTimeout(warpTimeout);
+            warpTimeout = setTimeout(() => {
+                let interval = setInterval(() => {
+                    warpIntensity -= 0.04;
+                    if (warpIntensity <= 0) {
+                        warpIntensity = 0;
+                        clearInterval(interval);
+                    }
+                }, 30);
+            }, 900);
+        }
 
         function resizeCanvas() {
             const dpr = window.devicePixelRatio || 1;
@@ -1866,7 +1886,7 @@
             canvas.style.height = window.innerHeight + 'px';
             ctx.scale(dpr, dpr);
 
-            stars = Array.from({length: 220}, () => ({
+            stars = Array.from({length: 250}, () => ({
                 x: Math.random() * window.innerWidth,
                 y: Math.random() * window.innerHeight,
                 size: Math.random() * 2.2 + 0.8,
@@ -1880,31 +1900,59 @@
         function animateStars() {
             ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
             const isJup = document.body.classList.contains('theme-jupiter');
-            const coreColor = isJup ? '#ffffff' : '#ffffff';
+            const coreColor = '#ffffff';
             const glowColor = isJup ? '255, 160, 60' : '0, 242, 254';
+            const cx = window.innerWidth / 2;
+            const cy = window.innerHeight / 2;
 
             stars.forEach(s => {
-                s.alpha += s.speed;
-                if(s.alpha < 0.2) { s.alpha = 0.2; s.speed = Math.abs(s.speed); }
-                if(s.alpha > 1) { s.alpha = 1; s.speed = -Math.abs(s.speed); }
-                
-                // Dış Halka Parlaması
-                ctx.fillStyle = `rgba(${glowColor}, ${s.alpha * 0.65})`;
-                ctx.beginPath();
-                ctx.arc(s.x, s.y, s.size * 1.8, 0, Math.PI * 2);
-                ctx.fill();
+                if (warpIntensity > 0) {
+                    // WARP MODU: Merkezden dışarıya doğru ışık çizgileri (streak)
+                    let dx = s.x - cx;
+                    let dy = s.y - cy;
+                    let angle = Math.atan2(dy, dx);
+                    let speed = (s.size * 20 + 25) * warpIntensity;
+                    
+                    let prevX = s.x;
+                    let prevY = s.y;
+                    
+                    s.x += Math.cos(angle) * speed;
+                    s.y += Math.sin(angle) * speed;
+                    
+                    // Çizgi (Streak) Çizimi
+                    ctx.strokeStyle = `rgba(${glowColor}, ${s.alpha * warpIntensity})`;
+                    ctx.lineWidth = s.size * warpIntensity * 1.2;
+                    ctx.beginPath();
+                    ctx.moveTo(prevX, prevY);
+                    ctx.lineTo(s.x, s.y);
+                    ctx.stroke();
 
-                // Keskin Beyaz Çekirdek
-                ctx.fillStyle = coreColor;
-                ctx.beginPath();
-                ctx.arc(s.x, s.y, s.size * 0.7, 0, Math.PI * 2);
-                ctx.fill();
+                    // Ekran dışına çıkan yıldızları merkeze geri taşı
+                    if (s.x < 0 || s.x > window.innerWidth || s.y < 0 || s.y > window.innerHeight) {
+                        s.x = cx + (Math.random() - 0.5) * 80;
+                        s.y = cy + (Math.random() - 0.5) * 80;
+                    }
+                } else {
+                    // NORMAL MOD: Parlayan sabit yıldızlar
+                    s.alpha += s.speed;
+                    if(s.alpha < 0.2) { s.alpha = 0.2; s.speed = Math.abs(s.speed); }
+                    if(s.alpha > 1) { s.alpha = 1; s.speed = -Math.abs(s.speed); }
+                    
+                    ctx.fillStyle = `rgba(${glowColor}, ${s.alpha * 0.65})`;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.size * 1.8, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = coreColor;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.size * 0.7, 0, Math.PI * 2);
+                    ctx.fill();
+                }
             });
             requestAnimationFrame(animateStars);
         }
         animateStars();
     </script>
-
 
     <script>
     /* 🔐 OTURUM HATIRLAMA + HESAP İŞLEMLERİ */
@@ -1924,7 +1972,6 @@
         socket.emit('auth-resume', { token }, (res) => {
             if (!res || !res.success) { clearSession(); return; }
             if (currentUser.username) {
-                // Sunucu yeniden başladıysa / bağlantı koptuysa odaya geri bağlan
                 if (currentRoom.startsWith('dm:') && currentDmPartner) openDm(currentDmPartner);
                 else socket.emit('join-room', { room: currentRoom, oldRoom: null, userName: currentUser.username });
                 return;
@@ -2157,6 +2204,7 @@
     function ownerSwitchPlanet(planet) {
         if (currentUser.role !== 'owner') return;
         if (planet === currentPlanetMode) { closeOwnerModal(); return; }
+        triggerWarpEffect();
         socket.emit('owner-switch-planet', { planet, token: getToken() }, (res) => {
             if (!res || !res.success) {
                 document.getElementById('owner-msg').textContent = (res && res.message) || 'Geçiş başarısız.';
@@ -2347,7 +2395,7 @@
     }
     </script>
     <script>
-    /* 🛡️ KORUMA KATMANI (caydırıcıdır, gerçek güvenlik sunucudadır) */
+    /* 🛡️ KORUMA KATMANI */
     (function () {
         const isField = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
 
