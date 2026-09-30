@@ -525,7 +525,7 @@
     <canvas id="stars-canvas"></canvas>
     <div id="gold-announce" class="gold-announce"></div>
     <div id="maintenance-overlay">
-        <h2>🛠️️ Gezegen bakımda</h2>
+        <h2>🛠 Gezegen bakımda</h2>
         <p style="color:#94a3b8; max-width:420px; line-height:1.5;">Bu ağ geçici olarak kapalı. Kurucu bakım bitince buradan devam edeceksin.</p>
     </div>
 
@@ -736,7 +736,7 @@
                     <span class="room-count-badge" id="badge-count-Lassell">0</span>
                 </div>
                 <div class="room-item voice-room" data-room="Galaktik Konferans" onclick="switchRoom('Galaktik Konferans', false, this)">
-                    <span>🎙️ Galaktik Konferans</span>
+                    <span>🎙️️ Galaktik Konferans</span>
                     <span class="room-count-badge" id="badge-count-Galaktik Konferans">0</span>
                 </div>
                 <div class="room-item restricted" data-room="Soğuk Dereceler" onclick="tryEnterRestrictedRoom('Soğuk Dereceler', this)">
@@ -1857,25 +1857,28 @@
             setTimeout(() => location.reload(), 150);
         }
 
-        /* --- HİPER HIZ / WARP EFEKTİ VE CANLI YILDIZLAR --- */
+        /* --- TAM SİMÜLE EDİLMİŞ BİLİM KURGU WARP EFEKTİ --- */
         const canvas = document.getElementById('stars-canvas');
         const ctx = canvas.getContext('2d');
         let stars = [];
-        let warpIntensity = 0; // 0: Normal, 1: Tam Warp Hızı
-        let warpTimeout = null;
+        let warpActive = false;
+        let warpSpeed = 0;
 
         function triggerWarpEffect() {
-            warpIntensity = 1;
-            if (warpTimeout) clearTimeout(warpTimeout);
-            warpTimeout = setTimeout(() => {
-                let interval = setInterval(() => {
-                    warpIntensity -= 0.04;
-                    if (warpIntensity <= 0) {
-                        warpIntensity = 0;
-                        clearInterval(interval);
+            warpActive = true;
+            warpSpeed = 1;
+            let dur = 0;
+            let warpInterval = setInterval(() => {
+                dur += 50;
+                if (dur > 900) {
+                    warpSpeed *= 0.85;
+                    if (warpSpeed < 0.05) {
+                        warpSpeed = 0;
+                        warpActive = false;
+                        clearInterval(warpInterval);
                     }
-                }, 30);
-            }, 900);
+                }
+            }, 30);
         }
 
         function resizeCanvas() {
@@ -1886,10 +1889,11 @@
             canvas.style.height = window.innerHeight + 'px';
             ctx.scale(dpr, dpr);
 
-            stars = Array.from({length: 250}, () => ({
-                x: Math.random() * window.innerWidth,
-                y: Math.random() * window.innerHeight,
-                size: Math.random() * 2.2 + 0.8,
+            stars = Array.from({length: 220}, () => ({
+                x: (Math.random() - 0.5) * window.innerWidth * 2,
+                y: (Math.random() - 0.5) * window.innerHeight * 2,
+                z: Math.random() * window.innerWidth,
+                size: Math.random() * 2 + 0.8,
                 alpha: Math.random(),
                 speed: (Math.random() - 0.5) * 0.035
             }));
@@ -1900,53 +1904,51 @@
         function animateStars() {
             ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
             const isJup = document.body.classList.contains('theme-jupiter');
-            const coreColor = '#ffffff';
-            const glowColor = isJup ? '255, 160, 60' : '0, 242, 254';
+            const glowColor = isJup ? '255, 140, 0' : '0, 242, 254';
             const cx = window.innerWidth / 2;
             const cy = window.innerHeight / 2;
 
             stars.forEach(s => {
-                if (warpIntensity > 0) {
-                    // WARP MODU: Merkezden dışarıya doğru ışık çizgileri (streak)
-                    let dx = s.x - cx;
-                    let dy = s.y - cy;
-                    let angle = Math.atan2(dy, dx);
-                    let speed = (s.size * 20 + 25) * warpIntensity;
-                    
-                    let prevX = s.x;
-                    let prevY = s.y;
-                    
-                    s.x += Math.cos(angle) * speed;
-                    s.y += Math.sin(angle) * speed;
-                    
-                    // Çizgi (Streak) Çizimi
-                    ctx.strokeStyle = `rgba(${glowColor}, ${s.alpha * warpIntensity})`;
-                    ctx.lineWidth = s.size * warpIntensity * 1.2;
-                    ctx.beginPath();
-                    ctx.moveTo(prevX, prevY);
-                    ctx.lineTo(s.x, s.y);
-                    ctx.stroke();
+                if (warpActive) {
+                    s.z -= warpSpeed * 35;
+                    if (s.z <= 0) s.z = window.innerWidth;
 
-                    // Ekran dışına çıkan yıldızları merkeze geri taşı
-                    if (s.x < 0 || s.x > window.innerWidth || s.y < 0 || s.y > window.innerHeight) {
-                        s.x = cx + (Math.random() - 0.5) * 80;
-                        s.y = cy + (Math.random() - 0.5) * 80;
+                    let k = 128 / s.z;
+                    let px = s.x * k + cx;
+                    let py = s.y * k + cy;
+
+                    let prevK = 128 / (s.z + warpSpeed * 40);
+                    let prevPx = s.x * prevK + cx;
+                    let prevPy = s.y * prevK + cy;
+
+                    if (px >= 0 && px <= window.innerWidth && py >= 0 && py <= window.innerHeight) {
+                        ctx.strokeStyle = `rgba(${glowColor}, ${Math.min(1, 1 - s.z / window.innerWidth)})`;
+                        ctx.lineWidth = s.size * (1 - s.z / window.innerWidth) * 2.5;
+                        ctx.beginPath();
+                        ctx.moveTo(prevPx, prevPy);
+                        ctx.lineTo(px, py);
+                        ctx.stroke();
                     }
                 } else {
-                    // NORMAL MOD: Parlayan sabit yıldızlar
+                    let k = 128 / s.z;
+                    let px = s.x * k + cx;
+                    let py = s.y * k + cy;
+
                     s.alpha += s.speed;
                     if(s.alpha < 0.2) { s.alpha = 0.2; s.speed = Math.abs(s.speed); }
                     if(s.alpha > 1) { s.alpha = 1; s.speed = -Math.abs(s.speed); }
-                    
-                    ctx.fillStyle = `rgba(${glowColor}, ${s.alpha * 0.65})`;
-                    ctx.beginPath();
-                    ctx.arc(s.x, s.y, s.size * 1.8, 0, Math.PI * 2);
-                    ctx.fill();
 
-                    ctx.fillStyle = coreColor;
-                    ctx.beginPath();
-                    ctx.arc(s.x, s.y, s.size * 0.7, 0, Math.PI * 2);
-                    ctx.fill();
+                    if (px >= 0 && px <= window.innerWidth && py >= 0 && py <= window.innerHeight) {
+                        ctx.fillStyle = `rgba(${glowColor}, ${s.alpha * 0.8})`;
+                        ctx.beginPath();
+                        ctx.arc(px, py, s.size * 1.5, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.arc(px, py, s.size * 0.6, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
                 }
             });
             requestAnimationFrame(animateStars);
@@ -2395,19 +2397,16 @@
     }
     </script>
     <script>
-    /* 🛡️ KORUMA KATMANI */
+    /* 🛡️ KOPYALAMA KORUMASI */
     (function () {
         const isField = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
 
-        // Sağ tık
         document.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Kopyala / kes / sürükle / seç (yazı alanları hariç)
         ['copy', 'cut', 'dragstart', 'selectstart'].forEach((ev) =>
             document.addEventListener(ev, (e) => { if (!isField(e.target)) e.preventDefault(); })
         );
 
-        // Kısayollar: F12, Ctrl+U/S/P, Ctrl+Shift+I/J/C/K
         document.addEventListener('keydown', (e) => {
             const k = (e.key || '').toLowerCase();
             const ctrl = e.ctrlKey || e.metaKey;
